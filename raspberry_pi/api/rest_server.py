@@ -457,42 +457,12 @@ def start_api_server():
         "API REST démarrée sur %s:%d | URL publique : %s | timeout=%ds",
         API_HOST, API_PORT, PUBLIC_URL, API_TIMEOUT,
     )
-    try:
-        # Production : Gunicorn avec timeout long (pour Gemma4 qui peut prendre 45s+)
-        from gunicorn.app.base import BaseApplication
-
-        class _StandaloneApp(BaseApplication):
-            def __init__(self, application, options=None):
-                self.options    = options or {}
-                self.application = application
-                super().__init__()
-
-            def load_config(self):
-                for k, v in self.options.items():
-                    if k in self.cfg.settings and v is not None:
-                        self.cfg.set(k.lower(), v)
-
-            def load(self):
-                return self.application
-
-        opts = {
-            "bind":             f"{API_HOST}:{API_PORT}",
-            "workers":          1,           # thread unique — état partagé en mémoire
-            "threads":          4,           # 4 threads pour requests concurrentes
-            "timeout":          API_TIMEOUT, # 3600s = 1h — évite kill des requêtes Gemma4
-            "graceful_timeout": 30,
-            "keepalive":        65,
-            "worker_class":     "gthread",
-            "loglevel":         "warning",
-            "accesslog":        "-",
-            "errorlog":         "-",
-        }
-        _StandaloneApp(app, opts).run()
-
-    except ImportError:
-        # Fallback : serveur de développement Werkzeug (sans Gunicorn)
-        log.warning("Gunicorn non disponible — démarrage avec le serveur de développement Flask")
-        app.run(host=API_HOST, port=API_PORT, debug=False, use_reloader=False, threaded=True)
+    # Serveur Werkzeug (Flask) : tourne en threads dans CE process, donc
+    # partage l'état en mémoire (_latest_data, _mongo, _smart_ai…) mis à
+    # jour par gnl_main. Un worker Gunicorn forké aurait sa propre copie
+    # mémoire figée et ne verrait jamais ces mises à jour ; et l'Arbiter
+    # Gunicorn ne peut pas s'initialiser hors du thread principal.
+    app.run(host=API_HOST, port=API_PORT, debug=False, use_reloader=False, threaded=True)
 
 
 if __name__ == "__main__":
